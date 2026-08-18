@@ -1,0 +1,80 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/galaxy-coord",
+    "crates/galaxy-gen",
+    "crates/galaxy-octree",
+    "crates/galaxy-render",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+glam = "0.30"
+bytemuck = { version = "1", features = ["derive"] }
+rand = "0.9"
+rand_chacha = "0.9"
+lru = "0.12"
+log = "0.4"
+
+# GUI / rendering. eframe drives the window/event-loop/web-bootstrap; egui-wgpu
+# gives us the CallbackTrait to draw our own wgpu pipeline inside a widget. All
+# three must share the same minor version, and wgpu must match what eframe pulls.
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts"] }
+egui = "0.36"
+egui-wgpu = "0.36"
+wgpu = "30"
+
+galaxy-coord = { path = "crates/galaxy-coord" }
+galaxy-gen = { path = "crates/galaxy-gen" }
+galaxy-octree = { path = "crates/galaxy-octree" }
+galaxy-render = { path = "crates/galaxy-render" }
+
+[package]
+name = "u4"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "u4"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "u4"
+path = "src/main.rs"
+
+[dependencies]
+galaxy-coord.workspace = true
+galaxy-gen.workspace = true
+galaxy-octree.workspace = true
+galaxy-render.workspace = true
+glam.workspace = true
+log.workspace = true
+eframe.workspace = true
+egui.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.11"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Document", "Window", "Element", "HtmlCanvasElement"] }
+console_log = "1"
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3

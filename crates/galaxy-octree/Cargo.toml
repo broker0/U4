@@ -1,0 +1,11 @@
+[package]
+name = "galaxy-octree"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+galaxy-coord.workspace = true
+galaxy-gen.workspace = true
+glam.workspace = true
+lru.workspace = true

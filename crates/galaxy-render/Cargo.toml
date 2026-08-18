@@ -1,0 +1,19 @@
+[package]
+name = "galaxy-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+galaxy-coord.workspace = true
+galaxy-gen.workspace = true
+galaxy-octree.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+wgpu.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+naga = "30"
