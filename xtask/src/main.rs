@@ -1,13 +1,14 @@
 //! Build helper tasks for U4.
 //!
 //! `cargo xtask build-wasm` compiles the `u4` cdylib to `wasm32-unknown-unknown`,
-//! runs `wasm-bindgen` to emit the JS glue, and drops everything (plus the
-//! `index.html`) into the top-level `wasm/` directory ready to be served by any
-//! static HTTP server.
+//! runs `wasm-bindgen` to emit the JS glue, and drops everything into `wasm/`.
+//! The `index.html` shell is sourced from `web/index.html`.
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use xshell::{cmd, Shell};
 
 fn main() -> anyhow::Result<()> {
@@ -41,7 +42,13 @@ fn build_wasm(release: bool) -> anyhow::Result<()> {
     }
 
     let wasm_path = format!("target/wasm32-unknown-unknown/{profile}/u4.wasm");
-    let dist_dir = "wasm";
+    let dist_dir = root.join("wasm");
+    let html_template = root.join("web/index.html");
+
+    if dist_dir.exists() {
+        fs::remove_dir_all(&dist_dir).context("failed to clean wasm output directory")?;
+    }
+    fs::create_dir_all(&dist_dir).context("failed to create wasm output directory")?;
 
     println!("Running wasm-bindgen...");
     if cmd!(sh, "wasm-bindgen --version").quiet().run().is_err() {
@@ -58,7 +65,10 @@ fn build_wasm(release: bool) -> anyhow::Result<()> {
     )
     .run()?;
 
-    println!("\nSuccess! WASM output is in `{dist_dir}/`.");
+    fs::copy(&html_template, dist_dir.join("index.html"))
+        .with_context(|| format!("failed to copy {}", html_template.display()))?;
+
+    println!("\nSuccess! WASM output is in `{}`.", dist_dir.display());
     println!("Serve it with a static server, e.g.:  cargo xtask serve");
     Ok(())
 }
