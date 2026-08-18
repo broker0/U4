@@ -21,6 +21,28 @@ use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
+/// Morphological profile used by [`GalaxyParams::density_at`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GalaxyType {
+    /// Legacy behavior: uniform density inside the modeled cube.
+    UniformCube,
+    /// Triaxial smooth ellipsoidal profile.
+    Elliptical,
+    /// Thin disk with a central bulge and logarithmic-like spiral arm pattern.
+    Spiral,
+}
+
+impl GalaxyType {
+    #[inline]
+    pub const fn label(self) -> &'static str {
+        match self {
+            GalaxyType::UniformCube => "Uniform cube",
+            GalaxyType::Elliptical => "Elliptical",
+            GalaxyType::Spiral => "Spiral",
+        }
+    }
+}
+
 /// Identifies a cubic octree node by explicit level indices.
 ///
 /// The universe cube spans `[0, 2^depth)` cells per axis at a given `depth`;
@@ -97,6 +119,8 @@ pub struct GalaxyParams {
     pub total_stars: f64,
     /// Deepest octree level whose (faintest) magnitude band is populated.
     pub max_depth: u8,
+    /// Morphological profile used for spatial star density.
+    pub galaxy_type: GalaxyType,
 }
 
 impl Default for GalaxyParams {
@@ -106,6 +130,7 @@ impl Default for GalaxyParams {
             universe_size_m: 131_072.0 * METERS_PER_LIGHT_YEAR,
             total_stars: 2.0e11,
             max_depth: 24,
+            galaxy_type: GalaxyType::Elliptical,
         }
     }
 }
@@ -186,6 +211,80 @@ impl GalaxyParams {
     pub fn expected_stars(&self, depth: u8) -> f64 {
         let d = depth.min(self.max_depth);
         self.total_stars * self.band_weight(d) / (8.0f64).powi(d as i32)
+    }
+
+    /// Relative stellar density at `world_m` for the current galaxy model.
+    ///
+    /// Current implementation is a simple triaxial elliptical galaxy centered
+    /// at the universe origin. Returns a value in `[0, 1]` used as the star
+    /// acceptance probability after uniform sampling inside a node.
+    #[inline]
+    pub fn density_at(&self, world_m: DVec3) -> f64 {
+        match self.galaxy_type {
+            GalaxyType::UniformCube => 1.0,
+            GalaxyType::Elliptical => {
+                // Triaxial ellipsoid scale lengths: flattened slightly in Y and Z.
+                let a = self.universe_size_m * 0.18;
+                let b = self.universe_size_m * 0.14;
+                let c = self.universe_size_m * 0.10;
+                let rx = world_m.x / a;
+                let ry = world_m.y / b;
+                let rz = world_m.z / c;
+                let r = (rx * rx + ry * ry + rz * rz).sqrt();
+
+                // Soft-core radial falloff. At r=0 => 1, then smoothly fades outward.
+                (-2.6 * r.powf(1.35)).exp().clamp(0.0, 1.0)
+            }
+            GalaxyType::Spiral => {
+                // Disk in the XZ plane (Y is vertical), with a compact bulge.
+                let x = world_m.x;
+                let y = world_m.y;
+                let z = world_m.z;
+                let r = (x * x + z * z).sqrt();
+                let phi = z.atan2(x);
+
+                // Keep the disk notably smaller than the root cube so far
+                // outskirts fade out before they hit the cube boundary.
+                let rd = self.universe_size_m * 0.105;
+                let hz = self.universe_size_m * 0.016;
+                let disk = (-r / rd).exp() * (-(y.abs()) / hz).exp();
+
+                // Four-arm logarithmic-like pattern via phase twisted by ln(r).
+                let m = 4.0;
+                let pitch = 0.38;
+                let r0 = self.universe_size_m * 0.02;
+                let twist = (r.max(r0) / r0).ln() / pitch;
+                let arm_phase = m * (phi - twist);
+                let arm = (0.5 + 0.5 * arm_phase.cos()).powf(6.0);
+
+                // Triaxial bulge, broader in-plane than vertically.
+                let bx = self.universe_size_m * 0.05;
+                let by = self.universe_size_m * 0.03;
+                let bz = self.universe_size_m * 0.05;
+                let br = ((x / bx).powi(2) + (y / by).powi(2) + (z / bz).powi(2)).sqrt();
+                let bulge = (-2.2 * br.powf(1.25)).exp();
+
+                let arm_modulated_disk = disk * (0.25 + 0.95 * arm);
+                // Rounded outer taper in 3D so the edge dissolves smoothly
+                // instead of appearing cut by the octree cube.
+                let outer_a = self.universe_size_m * 0.39;
+                let outer_b = self.universe_size_m * 0.26;
+                let outer_c = self.universe_size_m * 0.39;
+                let re =
+                    ((x / outer_a).powi(2) + (y / outer_b).powi(2) + (z / outer_c).powi(2)).sqrt();
+                let taper = if re <= 0.82 {
+                    1.0
+                } else if re >= 1.0 {
+                    0.0
+                } else {
+                    let t = (re - 0.82) / (1.0 - 0.82);
+                    let s = t * t * (3.0 - 2.0 * t); // smoothstep
+                    1.0 - s
+                };
+
+                ((0.95 * arm_modulated_disk + 0.70 * bulge) * taper).clamp(0.0, 1.0)
+            }
+        }
     }
 }
 
@@ -316,12 +415,25 @@ pub fn generate_stars(params: &GalaxyParams, key: NodeKey) -> Vec<Star> {
             abs_mag = lo + (hi - lo) * 1.0e-4;
         }
 
-        let lp = DVec3::new(
-            rng.random::<f64>() * node_size,
-            rng.random::<f64>() * node_size,
-            rng.random::<f64>() * node_size,
-        );
-        let world = origin + lp;
+        // Try a few uniform candidates and accept according to the galaxy
+        // density profile so the octree volume forms an actual galaxy shape.
+        let mut accepted_world = None;
+        for _ in 0..8 {
+            let lp = DVec3::new(
+                rng.random::<f64>() * node_size,
+                rng.random::<f64>() * node_size,
+                rng.random::<f64>() * node_size,
+            );
+            let world = origin + lp;
+            let density = params.density_at(world);
+            if rng.random::<f64>() <= density {
+                accepted_world = Some(world);
+                break;
+            }
+        }
+        let Some(world) = accepted_world else {
+            continue;
+        };
 
         let temp_k = spectral_temperature(&mut rng);
         let color = blackbody_srgb(temp_k);
@@ -419,17 +531,58 @@ mod tests {
             universe_size_m: 1.0e18,
             total_stars: 1.0e13,
             max_depth: 10,
+            galaxy_type: GalaxyType::Elliptical,
         }
     }
 
     #[test]
     fn generation_is_deterministic() {
         let p = params();
-        let key = NodeKey::new(3, 2, 5, 1);
+        let key = NodeKey::new(3, 4, 4, 4);
         let a = generate_stars(&p, key);
         let b = generate_stars(&p, key);
         assert_eq!(a, b);
         assert!(!a.is_empty(), "expected some stars in a mid-depth node");
+    }
+
+    #[test]
+    fn elliptical_density_is_higher_near_center() {
+        let p = params();
+        let center = p.density_at(DVec3::ZERO);
+        let edge = p.density_at(DVec3::splat(p.universe_size_m * 0.45));
+        assert!(center > edge);
+        assert!(center > 0.9);
+        assert!(edge < 0.05);
+    }
+
+    #[test]
+    fn uniform_cube_density_is_constant() {
+        let mut p = params();
+        p.galaxy_type = GalaxyType::UniformCube;
+        let a = p.density_at(DVec3::ZERO);
+        let b = p.density_at(DVec3::new(3.1e17, -2.4e17, 1.7e17));
+        assert_eq!(a, 1.0);
+        assert_eq!(b, 1.0);
+    }
+
+    #[test]
+    fn spiral_disk_is_denser_than_off_plane() {
+        let mut p = params();
+        p.galaxy_type = GalaxyType::Spiral;
+        let r = p.universe_size_m * 0.14;
+        let in_plane = p.density_at(DVec3::new(r, 0.0, 0.0));
+        let off_plane = p.density_at(DVec3::new(r, p.universe_size_m * 0.10, 0.0));
+        assert!(in_plane > off_plane);
+    }
+
+    #[test]
+    fn spiral_density_tapers_before_cube_corners() {
+        let mut p = params();
+        p.galaxy_type = GalaxyType::Spiral;
+        let near_center = p.density_at(DVec3::new(p.universe_size_m * 0.08, 0.0, 0.0));
+        let near_corner = p.density_at(DVec3::splat(p.universe_size_m * 0.47));
+        assert!(near_center > 0.05);
+        assert!(near_corner < 1.0e-4);
     }
 
     #[test]

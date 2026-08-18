@@ -1105,7 +1105,7 @@ impl egui_wgpu::CallbackTrait for WireCallback {
 #[cfg(test)]
 mod wire_tests {
     use super::*;
-    use galaxy_gen::GalaxyParams;
+    use galaxy_gen::{GalaxyParams, GalaxyType};
     use glam::Vec3;
 
     /// 8 m cube (min corner -4..+4), camera 20 m in front along +Z.
@@ -1115,6 +1115,7 @@ mod wire_tests {
             universe_size_m: 8.0,
             total_stars: 1.0e6,
             max_depth: 8,
+            galaxy_type: GalaxyType::Elliptical,
         };
         let camera = Camera {
             position: GalacticCoord::from_meters_i128(0, 0, 20),

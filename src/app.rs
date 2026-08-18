@@ -5,13 +5,15 @@
 use eframe::egui_wgpu;
 use egui::{Key, PointerButton};
 use galaxy_coord::{GalacticCoord, METERS_PER_AU, METERS_PER_LIGHT_YEAR};
-use galaxy_gen::GalaxyParams;
+use galaxy_gen::{GalaxyParams, GalaxyType};
 use galaxy_octree::{Galaxy, ViewParams};
 use galaxy_render::{
     Camera, FrameInput, FrustumCallback, FrustumResources, StarCallback, StarResources,
     WireCallback, WireFrameInput, WireResources,
 };
 use glam::{DQuat, DVec3};
+
+const GALAXY_CACHE_CAPACITY: usize = 65_536;
 
 pub struct GalaxyApp {
     galaxy: Galaxy,
@@ -79,7 +81,7 @@ impl GalaxyApp {
             .insert(frustum_resources);
 
         let params = GalaxyParams::default();
-        let galaxy = Galaxy::new(params, 65_536);
+        let galaxy = Galaxy::new(params, GALAXY_CACHE_CAPACITY);
 
         // Start somewhere inside the disk, a few thousand ly from center.
         let start = GalacticCoord::from_light_years_vec(8_000.0, 0.0, 200.0);
@@ -195,6 +197,20 @@ impl GalaxyApp {
         }
     }
 
+    fn set_galaxy_type(&mut self, galaxy_type: GalaxyType) {
+        if self.galaxy.params.galaxy_type == galaxy_type {
+            return;
+        }
+        let mut params = self.galaxy.params;
+        params.galaxy_type = galaxy_type;
+        self.galaxy = Galaxy::new(params, GALAXY_CACHE_CAPACITY);
+        self.visible_stars.clear();
+        self.visible_nodes.clear();
+        self.last_stats = galaxy_octree::TraverseStats::default();
+        self.scene_anchor = self.observer;
+        self.scene_dirty = true;
+    }
+
     fn overlay_ui(&mut self, ui: &mut egui::Ui, fps: f32) {
         let cam = self.camera.position;
         let stats = self.last_stats;
@@ -231,6 +247,28 @@ impl GalaxyApp {
             stats.cache_hits, stats.cache_misses
         ));
         ui.separator();
+
+        let mut galaxy_type = self.galaxy.params.galaxy_type;
+        egui::ComboBox::from_label("galaxy type")
+            .selected_text(galaxy_type.label())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut galaxy_type,
+                    GalaxyType::UniformCube,
+                    GalaxyType::UniformCube.label(),
+                );
+                ui.selectable_value(
+                    &mut galaxy_type,
+                    GalaxyType::Elliptical,
+                    GalaxyType::Elliptical.label(),
+                );
+                ui.selectable_value(
+                    &mut galaxy_type,
+                    GalaxyType::Spiral,
+                    GalaxyType::Spiral.label(),
+                );
+            });
+        self.set_galaxy_type(galaxy_type);
 
         let mut dirty = false;
         dirty |= ui

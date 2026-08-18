@@ -321,6 +321,7 @@ mod tests {
             universe_size_m: 131_072.0 * METERS_PER_LIGHT_YEAR,
             total_stars: 2.0e10,
             max_depth: 12,
+            galaxy_type: galaxy_gen::GalaxyType::Elliptical,
         };
         let mut g = Galaxy::new(params, 4096);
         let cam = g.node_center(NodeKey::new(6, 30, 30, 30));
@@ -348,6 +349,7 @@ mod tests {
             universe_size_m: 1.0e18,
             total_stars: 2.0e10,
             max_depth: 12,
+            galaxy_type: galaxy_gen::GalaxyType::Elliptical,
         };
         let mut g = Galaxy::new(params, 8192);
         let cam = g.node_center(NodeKey::ROOT);
@@ -377,6 +379,7 @@ mod tests {
             universe_size_m: 1.0e18,
             total_stars: 2.0e10,
             max_depth: 12,
+            galaxy_type: galaxy_gen::GalaxyType::Elliptical,
         };
         let g = Galaxy::new(params, 16);
         let key = NodeKey::new(3, 2, 2, 2);
@@ -398,6 +401,7 @@ mod tests {
             universe_size_m: 1.0e18,
             total_stars: 2.0e10,
             max_depth: 14,
+            galaxy_type: galaxy_gen::GalaxyType::Elliptical,
         };
         let cam = GalacticCoord::from_meters_f64(DVec3::splat(1.0e16));
 
@@ -445,6 +449,7 @@ mod tests {
             universe_size_m: 1.0e18,
             total_stars: 2.0e10,
             max_depth: 14,
+            galaxy_type: galaxy_gen::GalaxyType::Elliptical,
         };
         let cam = GalacticCoord::from_meters_f64(DVec3::new(3.1e15, -2.2e15, 1.7e15));
         let view = ViewParams {
